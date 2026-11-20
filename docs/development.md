@@ -21,11 +21,15 @@ pi -e ./index.ts
    Pi's role and rules as system instructions. Compacted initial tool schemas
    and any replayed history travel in the session's opening prompt within the
    160 KB replay budget. Later turns on an intact history prefix reuse the
-   session and send only new input (plus any dynamic tool deltas); a changed
-   system prompt opens a new session. (0.2.0 sent Pi's system prompt in the
-   opening prompt to avoid false `429 RESOURCE_EXHAUSTED` replies seen with
-   agy 1.5.9, #24; with agy 1.5.13 a 400 KB append, RFC 2119 wording included,
-   worked on Gemini and Claude models.)
+   session and send only new input (plus any dynamic tool deltas). A changed
+   leading system prompt (Pi's system messages before the first other message)
+   opens a new session; later `system` messages travel as `<system_update>`
+   text in the prompt. From 0.1.4 to 0.2.0 Pi's system prompt travelled in the
+   opening prompt instead, to avoid false `429 RESOURCE_EXHAUSTED` replies seen
+   with agy 1.5.9 (#24). On agy 1.5.13, separate probes with a 400 KB append
+   and with RFC 2119 wording both succeeded on Gemini and Claude models; that
+   is not evidence that the earlier failure is fixed (see
+   [compatibility limits](reference.md#compatibility-limits)).
 3. Model tool calls reach the bridge and remain pending while Pi executes them.
    Pi receives a `toolUse` result, then supplies tool results on its next request.
 4. Those results resolve the pending MCP requests, allowing the same ACP turn to

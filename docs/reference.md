@@ -205,6 +205,14 @@ both that baseline (on Node.js 22.19.0 and 24) and the `1.5.x` host range
 (`1.5.0` and latest `1.5`), which requires Node.js >= 22.19.0. Compatibility
 with older `@mariozechner/*` interfaces is not claimed.
 
+Pi's system prompt is sent as agy's system prompt (`systemPrompt.append` of
+`session/new`). This is tested on agy 1.5.13 only. On agy 1.5.9, upstream
+0.1.4–0.2.0 avoided that slot because the backend answered with false
+`429 RESOURCE_EXHAUSTED` replies (#24). If that returns, a turn fails with a
+429 error, or the first turn of a session hangs: `session/prompt` has no
+deadline, so it waits until Pi cancels it. There is no automatic fallback; go
+back to a release that sends the prompt in the opening message.
+
 Sampling parameters, output limits, forced `toolChoice`, and provider-scoped
 environment overrides are not mapped to ACP. See
 [development checks](development.md#verification) for the scope of automated validation.

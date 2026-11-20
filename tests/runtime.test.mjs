@@ -3639,6 +3639,28 @@ test('session/new appends Pi\'s system prompt after the bridge note while openin
   )
 })
 
+test('only a changed leading system prompt opens a new session, and an emptied one appends just the bridge note', async (t) => {
+  const { adapter, prompts } = makeRuntime(t)
+  const sys = (id, text) => ({ id, role: 'system', content: [{ type: 'text', text }], source: { kind: 'system-prompt' } })
+  const base = { provider: 'antigravity', model: 'gemini-4-argon', sessionId: 'S-LEADING' }
+  const step1 = await collect(adapter.stream({ ...base, messages: [sys('s1', 'Rules A'), user('u1', 'first')] }))
+  assert.equal(prompts()[0].system, sessionSystemPrompt('Rules A'))
+
+  // Same history prefix, only the leading system prompt changed.
+  const history = [user('u1', 'first'), assistantFrom('a1', step1)]
+  const step2 = await collect(adapter.stream({ ...base, messages: [sys('s2', 'Rules B'), ...history, user('u2', 'second')] }))
+  const second = prompts()[1]
+  assert.notEqual(second.session, prompts()[0].session)
+  assert.equal(second.system, sessionSystemPrompt('Rules B'))
+  assert.doesNotMatch(second.text, /Rules [AB]/)
+
+  // The leading system prompt removed: a new session with only the bridge note.
+  await collect(adapter.stream({ ...base, messages: [...history, user('u2', 'second'), assistantFrom('a2', step2), user('u3', 'third')] }))
+  const third = prompts()[2]
+  assert.notEqual(third.session, second.session)
+  assert.equal(third.system, bridgeSystemPrompt())
+})
+
 test('permission probes fail closed during session/new and pre-/post-turn windows even after MCP handshake', async (t) => {
   const toAgent = new PassThrough()
   const fromAgent = new PassThrough()
