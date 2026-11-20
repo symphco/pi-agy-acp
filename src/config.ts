@@ -45,6 +45,8 @@ export interface Config {
   longDecodeContinuations: number
   /** Minimum interval between quota refreshes through `agy -p /usage`. */
   quotaTtlMs: number
+  /** How long dispose waits for agy to exit before removing its home. */
+  exitWaitMs: number
 }
 
 export const defaults: Config = {
@@ -60,6 +62,7 @@ export const defaults: Config = {
   relayAfterMs: 85000,
   longDecodeContinuations: 3,
   quotaTtlMs: 120000,
+  exitWaitMs: 6000,
 }
 
 export function asEffort(value: string | undefined): Effort | undefined {

@@ -202,6 +202,11 @@ export class AcpProcess {
     )
   }
 
+  /** Settles once the child has exited (at once when none was started). */
+  exited(): Promise<void> {
+    return this.child?.exited.then(() => undefined) ?? Promise.resolve()
+  }
+
   /** Terminate the process. */
   stop(): void {
     const error = new Error('ACP process stopped')

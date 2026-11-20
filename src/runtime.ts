@@ -449,6 +449,7 @@ export class AntigravityRuntime {
     }
     this.conversations.clear()
     this.tenants.clear()
+    const stopping = this.process
     this.process?.stop()
     this.process = undefined
     this.disposal = (async () => {
@@ -456,6 +457,12 @@ export class AntigravityRuntime {
       await this.starting?.catch(() => undefined)
       await this.warmupPromise?.catch(() => undefined)
       await this.bridge.close()
+      // agy may still hold files in its home; a home that cannot be removed now
+      // is removed by the next runtime's sweep once this process has ended.
+      await settleWithin(
+        stopping?.exited() ?? Promise.resolve(),
+        this.host.config.exitWaitMs ?? defaults.exitWaitMs,
+      )
       removeProcessHome(this.home)
       this.state = 'idle'
       this.lifecycle = 'disposed'
@@ -751,6 +758,7 @@ export class AntigravityRuntime {
 
   private runPreflight(): Promise<PreflightResult> {
     if (this.preflight !== undefined) {
+      removeDeadProcessHomes(this.baseHome)
       prepareHome(this.home)
       return Promise.resolve(this.preflight)
     }
@@ -1581,6 +1589,22 @@ function messageIds(messages: readonly RequestMessage[]): string[] {
 
 function toolError(text: string): BridgeToolResult {
   return { content: [{ type: 'text', text }], isError: true }
+}
+
+/**
+ * Wait for a promise, at most `ms`; never rejects.
+ * @param promise - what to wait for.
+ * @param ms - upper bound.
+ */
+async function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    promise.catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms)
+    }),
+  ])
+  clearTimeout(timer)
 }
 
 /**

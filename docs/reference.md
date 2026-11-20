@@ -124,11 +124,19 @@ instance's agy session data, log (`acp.log`), and authentication files.
 Many Pi instances can share one `PI_AGY_HOME`, including subagents that inherit
 it: each instance starts agy with its own home, so starting one never clears
 another's sessions. An instance clears its own home's temporary session data and
-old logs whenever agy starts, removes the home on shutdown, and at startup
-removes the homes of instances whose process has ended (never one whose process
-still runs). Sessions rebuild from Pi's history. Cleanup is best-effort if files
-are locked. Folders an earlier version left directly in `PI_AGY_HOME` (`agy`,
-`config`, `workspace`, `acp.log`) are no longer used and can be deleted.
+old logs whenever agy starts. On shutdown it waits for agy to exit (at most a
+few seconds) and removes its home; each agy launch also removes the homes of
+instances whose process has ended (never one whose process still runs). Cleanup
+is best-effort: a home whose files are still locked stays until a later launch.
+Sessions rebuild from Pi's history. Liveness is checked by process id, so every
+instance sharing a `PI_AGY_HOME` must run on the same host and in the same PID
+namespace; do not share one across machines or containers.
+
+Folders an earlier version left directly in `PI_AGY_HOME` (`agy`, `config`,
+`workspace`, `acp.log*`) are no longer used by this version. Pi instances still
+running the earlier version keep using them, so delete them only after every
+such instance has exited or reloaded the new version. Until then, `/agy-acp`
+may still read the old `acp.log` for the account email.
 
 With file-backed authentication, the extension copies the existing OAuth token
 from your normal agy directory and sets its permissions to `0600`. Do not commit

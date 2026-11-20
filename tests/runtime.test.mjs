@@ -1,7 +1,7 @@
 // End-to-end tests of the runtime against the scripted fake ACP agent.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { PassThrough, Writable } from 'node:stream'
 import {
@@ -282,6 +282,38 @@ test('runtimes sharing PI_AGY_HOME keep their own homes: a second start leaves t
   await first.runtime.dispose()
   assert.equal(existsSync(first.home), false)
   assert.equal(existsSync(second.home), true)
+})
+
+test('dispose removes the home only after agy has exited, waiting at most exitWaitMs', async (t) => {
+  const { runtime, home } = makeRuntime(t)
+  const proc = await runtime.ensureReady()
+  const exit = deferred()
+  t.mock.method(proc, 'exited', () => exit.promise)
+  let disposed = false
+  const disposing = runtime.dispose().then(() => { disposed = true })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(disposed, false)
+  assert.equal(existsSync(home), true)
+  exit.resolve()
+  await disposing
+  assert.equal(existsSync(home), false)
+
+  const stuck = makeRuntime(t, { config: { exitWaitMs: 50 } })
+  const stuckProc = await stuck.runtime.ensureReady()
+  t.mock.method(stuckProc, 'exited', () => new Promise(() => {}))
+  await stuck.runtime.dispose()
+  assert.equal(existsSync(stuck.home), false)
+})
+
+test('every agy launch removes homes of ended processes, a restart too', async (t) => {
+  const { runtime, base } = makeRuntime(t)
+  const proc = await runtime.ensureReady()
+  const ended = spawnSync(process.execPath, ['-e', '']).pid
+  const dead = join(base, 'processes', `${ended}-abc123`)
+  mkdirSync(join(dead, 'agy'), { recursive: true })
+  proc.stop()
+  await runtime.ensureReady()
+  assert.equal(existsSync(dead), false)
 })
 
 test('forced warmup refreshes an observed catalog and aborting one waiter keeps shared discovery alive', async (t) => {
@@ -935,6 +967,7 @@ async function assertCancelledSettlement(t, promptFn, expectedPrompts, settle) {
   const proc = {
     alive: true,
     stop: () => {},
+    exited: async () => {},
     prompt: t.mock.fn(() => pending.promise),
     cancel: () => {},
   }
@@ -2510,7 +2543,8 @@ test('dispose stops a child blocked in the ACP initialize RPC', { timeout: 1_500
   const entered = deferred()
   const exited = deferred()
   let terminated = 0
-  const { runtime } = makeRuntime(t, { host: { spawnAcp: () => ({
+  // A child that never exits: dispose waits for it only `exitWaitMs`.
+  const { runtime } = makeRuntime(t, { config: { exitWaitMs: 50 }, host: { spawnAcp: () => ({
     stdin: new Writable({ write(_data, _encoding, done) { entered.resolve(); done() } }),
     stdout: new PassThrough(),
     exited: exited.promise,
