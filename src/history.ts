@@ -36,6 +36,13 @@ const HISTORY_CLOSE = '\n</pi_history>\n\n'
 const OMISSION_NOTICE_RESERVE_BYTES = 128
 
 /**
+ * Start of the user message Pi puts first in the context after a compaction
+ * (pi-coding-agent `COMPACTION_SUMMARY_PREFIX`).
+ */
+export const COMPACTION_SUMMARY_PREFIX =
+  'The conversation history before this point was compacted into the following summary:'
+
+/**
  * Live input for a rebuild whose trailing messages are all tool results (for
  * example right after compaction in the middle of a tool loop), so the agent
  * receives a meaningful instruction instead of an empty prompt.
@@ -290,10 +297,23 @@ function historyTranscript(
   history: readonly RequestMessage[],
   budget: number,
 ): string {
+  // Pi's compaction summary (goal, constraints, decisions) is the oldest
+  // message after a compaction; keep it whenever it fits, then fill newest first.
+  const first = history[0]
+  const summary =
+    first?.role === 'user' &&
+    textOf(first.content).startsWith(COMPACTION_SUMMARY_PREFIX)
+      ? renderTranscript([first])
+      : undefined
+  const kept =
+    summary !== undefined && utf8Bytes(summary) + 2 <= budget
+      ? summary
+      : undefined
+  const lowest = kept === undefined ? 0 : 1
   const parts: string[] = []
-  let used = 0
+  let used = kept === undefined ? 0 : utf8Bytes(kept) + 2
   let dropped = 0
-  for (let index = history.length - 1; index >= 0; index--) {
+  for (let index = history.length - 1; index >= lowest; index--) {
     const message = history[index] as RequestMessage
     const rendered = renderTranscript([message])
     const separator = parts.length === 0 ? 0 : 2
@@ -303,12 +323,12 @@ function historyTranscript(
         const truncated = truncatedToolTranscript(message, budget)
         if (truncated !== undefined) {
           parts.unshift(truncated)
-          dropped = index
+          dropped = index - lowest
         } else {
-          dropped = index + 1
+          dropped = index + 1 - lowest
         }
       } else {
-        dropped = index + 1
+        dropped = index + 1 - lowest
       }
       break
     }
@@ -319,6 +339,7 @@ function historyTranscript(
     parts.unshift(
       `[Earlier ${dropped} history messages omitted to fit the context replay budget]`,
     )
+  if (kept !== undefined) parts.unshift(kept)
   if (parts.length === 0) return ''
   return `${HISTORY_OPEN}${parts.join('\n\n')}${HISTORY_CLOSE}`
 }

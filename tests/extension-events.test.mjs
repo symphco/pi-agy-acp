@@ -274,6 +274,27 @@ test('lifecycle uses light resets, cache warming stops only for this provider, a
     ),
     undefined,
   )
+  // A completed reply whose cumulative turn usage passed the window while the
+  // real context (preparation.tokensBefore) stayed below it: not an overflow.
+  const known = { ...h.ctx, model: { provider, id: 'gemini-4-neon', contextWindow: 512_000 } }
+  const overflow = (willRetry, tokensBefore) => ({ reason: 'overflow', willRetry, preparation: { tokensBefore } })
+  assert.deepEqual(h.handlers.get('session_before_compact')(overflow(false, 56_496), known), { cancel: true })
+  assert.equal(h.handlers.get('session_before_compact')(overflow(false, 512_000), known), undefined)
+  assert.equal(h.handlers.get('session_before_compact')(overflow(true, 56_496), known), undefined)
+  assert.equal(
+    h.handlers.get('session_before_compact')(overflow(false, 56_496), {
+      ...h.ctx,
+      model: { provider, id: 'claude-sonnet-5-5', contextWindow: 0 },
+    }),
+    undefined,
+  )
+  assert.equal(
+    h.handlers.get('session_before_compact')(overflow(false, 56_496), {
+      ...h.ctx,
+      model: { provider: 'anthropic', id: 'claude-sonnet-4', contextWindow: 200_000 },
+    }),
+    undefined,
+  )
   assert.equal(
     h.handlers.get('session_before_compact')(
       { reason: 'manual' },

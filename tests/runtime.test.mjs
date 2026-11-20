@@ -38,10 +38,12 @@ import {
 import { deferred, digest } from '../src/util.ts'
 import {
   bridgeSystemPrompt,
+  COMPACTION_SUMMARY_PREFIX,
   EMPTY_INPUT_CONTINUATION,
   renderSessionInstructions,
   sessionSystemPrompt,
   REPLAY_BUDGET_BYTES,
+  replayPrompt,
 } from '../src/history.ts'
 import {
   assertSupportedAgyVersion,
@@ -1215,6 +1217,29 @@ test('usage_update sets single-call totalTokens across tool steps while ignoring
     reasoningTokens: 20,
     totalTokens: 848,
   })
+})
+
+test('bounded replay keeps Pi\'s compaction summary and omits the oldest messages after it', () => {
+  const summary = user('sum', `${COMPACTION_SUMMARY_PREFIX}\n\n<summary>\nGOAL: fix the menu. Do NOT touch CaseAvatar.\n</summary>`)
+  const history = [
+    summary,
+    user('u1', `OLD-1 ${'x'.repeat(55_000)}`),
+    assistant('a1', [{ type: 'text', text: 'ack one' }]),
+    user('u2', `OLD-2 ${'y'.repeat(55_000)}`),
+    assistant('a2', [{ type: 'text', text: 'ack two' }]),
+    user('u3', `OLD-3 ${'z'.repeat(55_000)}`),
+    assistant('a3', [{ type: 'text', text: 'ack three' }]),
+  ]
+  const [block] = replayPrompt(history, [user('u9', 'latest')])
+  assert.match(block.text, /^<pi_history>\n<user>\nThe conversation history before this point was compacted[\s\S]*Do NOT touch CaseAvatar[\s\S]*<\/user>\n\n\[Earlier 1 history messages omitted/)
+  assert.ok(!block.text.includes('OLD-1'))
+  assert.ok(block.text.includes('ack one') && block.text.includes('OLD-2') && block.text.includes('OLD-3'))
+  assert.ok(Buffer.byteLength(block.text, 'utf8') <= REPLAY_BUDGET_BYTES)
+
+  // A summary larger than the whole budget is dropped like any other message.
+  const [tight] = replayPrompt(history, [user('u9', 'latest')], { maxHistoryBytes: 200 })
+  assert.doesNotMatch(tight.text, /CaseAvatar/)
+  assert.match(tight.text, /\[Earlier 6 history messages omitted/)
 })
 
 test('bounded replay drops the oldest history, closes the block, and keeps the latest input intact', async (t) => {

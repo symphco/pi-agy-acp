@@ -162,8 +162,9 @@ The fallback families are:
 These entries are defaults, not a guarantee of account access. Model context windows
 start at `0` until learned dynamically from the server-issued `max_context_tokens`
 metadata in the session database and cached per model in `catalog.json`. The history
-replay budget is 160,000 bytes; older history can be omitted to fit, and historical
-images become text placeholders.
+replay budget is 160,000 bytes; older history can be omitted to fit (Pi's
+compaction summary is kept whenever it fits on its own), and historical images
+become text placeholders.
 
 ## Usage and costs
 
@@ -185,6 +186,19 @@ occupancy:
   averaging the final `session/prompt` segment's prompt tokens across that
   segment's model calls plus final-segment output tokens; this fallback is an
   estimate rather than an exact per-step measurement.
+
+The cumulative buckets are a contract: Pi's session totals and any usage report
+built on them count every model call of a turn. Pi 1.5.x, however, also treats a
+completed reply whose `input + cacheRead` exceeds the context window as a silent
+overflow and compacts. A long tool loop passes that line while its real context
+is a fraction of the window. So for this provider the extension cancels an
+automatic `overflow` compaction that will not retry when Pi's own measure of the
+context (`preparation.tokensBefore`) is below the model's known window. Real
+overflows still compact: a provider overflow error (Pi retries it), a context
+at or above the window, and models whose window is unknown. Pi shows such a
+cancel as a brief compaction that ends with "Auto-compaction cancelled"; it can
+recur once at the start of the next prompt, when Pi checks the same reply again.
+Manual `/compact` and threshold compaction are unaffected.
 
 Default model prices are zero because pricing is unavailable. If you configure
 Pi model pricing overrides, flat per-million rates price the cumulative turn

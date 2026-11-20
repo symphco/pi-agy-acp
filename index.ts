@@ -172,13 +172,24 @@ export default function (
   pi.on('cache_warming_decision', (_event, ctx) =>
     ctx.model?.provider === config.provider ? { action: 'stop' } : undefined,
   )
-  pi.on('session_before_compact', (event, ctx) =>
-    ctx.model?.provider === config.provider &&
-    event.reason === 'threshold' &&
-    (ctx.model.contextWindow ?? 0) <= 0
-      ? { cancel: true }
-      : undefined,
-  )
+  pi.on('session_before_compact', (event, ctx) => {
+    if (ctx.model?.provider !== config.provider) return undefined
+    const contextWindow = ctx.model.contextWindow ?? 0
+    if (event.reason === 'threshold' && contextWindow <= 0)
+      return { cancel: true }
+    // agy reports a turn's usage once, with cumulative input and cache-read
+    // buckets over all its model calls (the context size is `totalTokens`).
+    // Pi reads input + cacheRead above the window on a completed reply as a
+    // silent overflow; when the real context is below the window, it is not.
+    if (
+      event.reason === 'overflow' &&
+      event.willRetry === false &&
+      contextWindow > 0 &&
+      (event.preparation?.tokensBefore ?? contextWindow) < contextWindow
+    )
+      return { cancel: true }
+    return undefined
+  })
   pi.on('model_select', (event, ctx) => {
     const retarget =
       pendingSettle &&

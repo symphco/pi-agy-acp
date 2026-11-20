@@ -49,6 +49,10 @@ pi -e ./index.ts
   `session/set_config_option`), so session creation and idle pre-/post-turn
   windows remain fail-closed (`cancelled` before `session/new` completes;
   `reject_once` when no live turn owns the session, even after MCP handshake).
+  `session_before_compact` cancels threshold compaction for models with an
+  unknown window, and a false `overflow` compaction (completed reply, real
+  context below the window) caused by the cumulative usage buckets; see
+  [Usage and costs](reference.md#usage-and-costs).
   Tree navigation and compaction close conversation sessions and their files,
   retaining the process, bridge, and caches. `session_start` (`new`, `resume`, or
   `fork`) uses the same light reset if the runtime survives; `session_shutdown`
