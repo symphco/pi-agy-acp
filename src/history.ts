@@ -1,9 +1,9 @@
 /**
  * Projection of Pi request history into Antigravity ACP prompts.
  *
- * ACP sessions own their history, so `session/new` appends only the static MCP
- * tool-routing preamble while `<system_instructions>`,
- * `<harness_tool_instructions>`, and `<pi_history>` travel in a session's
+ * ACP sessions own their history, so `session/new` appends the MCP
+ * tool-routing preamble and Pi's system prompt to agy's system prompt while
+ * `<harness_tool_instructions>` and `<pi_history>` travel in a session's
  * opening prompt; subsequent turns send only new input. The replay renders
  * earlier turns as a delimited transcript in front of the newest user input;
  * tool calls keep the agent-visible `mcp_pi_` names.
@@ -98,7 +98,6 @@ export interface SupplementalTool {
 
 /** Options controlling session preamble rendering and replay budgeting. */
 export interface ReplayPromptOptions {
-  system?: string
   supplementalTools?: readonly SupplementalTool[]
   maxHistoryBytes?: number
 }
@@ -111,38 +110,40 @@ export function bridgeSystemPrompt(): string {
   return [
     'You are the primary model of a Pi coding agent session. The harness owns the conversation, the tools, and their permissions.',
     `Every harness tool is available to you under the prefix \`${AGENT_TOOL_PREFIX}\`: a tool named \`X\` in the harness instructions is the tool \`${AGENT_TOOL_PREFIX}X\`. If \`${AGENT_TOOL_PREFIX}X\` is absent from your direct tool declarations, invoke it via \`${AGENT_TOOL_PREFIX}${CALL_TOOL_NAME}\` with \`{"name":"X","arguments":{...}}\`. Use only these tools; pass arguments exactly as their schemas define.`,
-    'When the first user message contains <system_instructions>, <harness_tool_instructions>, or <pi_history> blocks, treat <system_instructions> and <harness_tool_instructions> as harness instructions for the entire session and <pi_history> as the earlier part of this conversation; continue from the newest input after them without repeating completed actions.',
+    'When the first user message contains <harness_tool_instructions> or <pi_history> blocks, treat <harness_tool_instructions> as harness instructions for the entire session and <pi_history> as the earlier part of this conversation; continue from the newest input after them without repeating completed actions.',
   ].join('\n')
 }
 
 /**
- * Render the harness system prompt and compacted initial tool instructions for
- * delivery at the head of a session's opening prompt.
+ * The session's system prompt addition: the bridge instructions, then Pi's
+ * own system prompt, so the model receives the harness's role and rules as
+ * system instructions rather than as text in the first user message.
  * @param system - the Pi system prompt.
+ * @returns text for `systemPrompt.append` of `session/new`.
+ */
+export function sessionSystemPrompt(system: string): string {
+  const bridge = bridgeSystemPrompt()
+  return system.length > 0 ? `${bridge}\n\n${system}` : bridge
+}
+
+/**
+ * Render the full instructions of compacted initial tools for delivery at the
+ * head of a session's opening prompt.
  * @param supplementalTools - initially advertised tools whose MCP schemas were compacted, preserving their full instructions.
  * @returns the delimited instruction preamble ending in a blank line, or empty string when absent.
  */
 export function renderSessionInstructions(
-  system: string,
   supplementalTools: readonly SupplementalTool[] = [],
 ): string {
-  const sections: string[] = []
-  if (system.length > 0) {
-    sections.push(`<system_instructions>\n${system}\n</system_instructions>`)
-  }
-  if (supplementalTools.length > 0) {
-    const entries = supplementalTools.map((t) =>
-      JSON.stringify({
-        name: t.name,
-        description: t.description,
-        parameters: t.inputSchema,
-      }),
-    )
-    sections.push(
-      `<harness_tool_instructions>\n${entries.join('\n')}\n</harness_tool_instructions>`,
-    )
-  }
-  return sections.length > 0 ? `${sections.join('\n\n')}\n\n` : ''
+  if (supplementalTools.length === 0) return ''
+  const entries = supplementalTools.map((t) =>
+    JSON.stringify({
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema,
+    }),
+  )
+  return `<harness_tool_instructions>\n${entries.join('\n')}\n</harness_tool_instructions>\n\n`
 }
 
 /**
@@ -230,7 +231,7 @@ export function promptBlocks(
 }
 
 /**
- * Build the prompt that (re)creates a session: harness system/tool instructions,
+ * Build the prompt that (re)creates a session: harness tool instructions,
  * earlier history as transcript, and trailing input messages as live content.
  *
  * The trailing input and session instructions are always complete. History
@@ -250,10 +251,7 @@ export function replayPrompt(
   input: readonly RequestMessage[],
   options: ReplayPromptOptions = {},
 ): AcpPromptBlock[] {
-  const preamble = renderSessionInstructions(
-    options.system ?? '',
-    options.supplementalTools ?? [],
-  )
+  const preamble = renderSessionInstructions(options.supplementalTools ?? [])
   const inputBlocks: AcpPromptBlock[] =
     input.length > 0
       ? inputPrompt(input)

@@ -43,7 +43,7 @@ import {
 import {
   AGENT_TOOL_PREFIX,
   CALL_TOOL_NAME,
-  bridgeSystemPrompt,
+  sessionSystemPrompt,
   inputPrompt,
   MCP_SERVER_NAME,
   renderTranscript,
@@ -578,17 +578,20 @@ export class AntigravityRuntime {
       let supplementalTools: readonly BridgeTool[] = []
       if (conv.sessionId === undefined) {
         conv.systemHash = digest(split.system)
-        supplementalTools = await this.openSession(conv, tools, proc)
+        supplementalTools = await this.openSession(
+          conv,
+          tools,
+          proc,
+          split.system,
+        )
       }
       this.assertOwner(proc, conv, conv.sessionId)
       await this.select(conv, proc, options.model, effort)
       this.assertOwner(proc, conv, conv.sessionId)
       let blocks: AcpPromptBlock[]
       if (plan.rebuild) {
-        blocks = replayPrompt(plan.history, plan.input, {
-          system: split.system,
-          supplementalTools,
-        })
+        // Pi's system prompt went to session/new (sessionSystemPrompt).
+        blocks = replayPrompt(plan.history, plan.input, { supplementalTools })
       } else {
         blocks = inputPrompt(plan.input)
         const toolDelta = consumeToolDelta(conv, tools)
@@ -809,6 +812,7 @@ export class AntigravityRuntime {
     conv: Conversation,
     tools: readonly BridgeTool[],
     proc: AcpProcess,
+    system: string,
   ): Promise<readonly BridgeTool[]> {
     this.assertOwner(proc, conv)
     syncOAuthToken(this.home)
@@ -841,7 +845,7 @@ export class AntigravityRuntime {
           _meta: {
             antigravity: {
               systemPrompt: {
-                append: bridgeSystemPrompt(),
+                append: sessionSystemPrompt(system),
               },
             },
           },

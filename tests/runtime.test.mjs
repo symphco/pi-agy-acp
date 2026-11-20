@@ -40,6 +40,7 @@ import {
   bridgeSystemPrompt,
   EMPTY_INPUT_CONTINUATION,
   renderSessionInstructions,
+  sessionSystemPrompt,
   REPLAY_BUDGET_BYTES,
 } from '../src/history.ts'
 import {
@@ -1249,8 +1250,9 @@ test('bounded replay drops the oldest history, closes the block, and keeps the l
   assert.notEqual(replay.session, prompts()[0].session)
   assert.match(
     replay.text,
-    /^<system_instructions>\nYou are Pi\.\n<\/system_instructions>\n\n<pi_history>\n/,
+    /^<pi_history>\n/,
   )
+  assert.equal(replay.system, sessionSystemPrompt('You are Pi.'))
   assert.match(replay.text, /\n<\/pi_history>\n\nLATEST /)
   assert.ok(replay.text.endsWith(latest))
   assert.ok(!replay.text.includes('OLD-1'))
@@ -3498,9 +3500,9 @@ test('dynamic tool updates distinguish restored vs modified schemas and preserve
   assert.notEqual(digest(compacted[0]), digest(initialRaw[0]))
   assert.doesNotMatch(bridgeSystemPrompt(), /<\/harness_tool_instructions>/)
   assert.doesNotMatch(bridgeSystemPrompt(), /UNIQUE_TAIL_MARKER/)
-  const promptText = renderSessionInstructions('base', initialRaw)
-  assert.match(promptText, /<system_instructions>\nbase\n<\/system_instructions>/)
-  assert.match(promptText, /<harness_tool_instructions>/)
+  assert.equal(sessionSystemPrompt(''), bridgeSystemPrompt())
+  const promptText = renderSessionInstructions(initialRaw)
+  assert.match(promptText, /^<harness_tool_instructions>/)
   assert.match(promptText, /UNIQUE_TAIL_MARKER/)
 
   const conv = {
@@ -3526,7 +3528,7 @@ test('dynamic tool updates distinguish restored vs modified schemas and preserve
   assert.match(schemaDelta, /"script"/)
 })
 
-test('session/new keeps a static bridge system prompt while opening and rebuilt prompts carry harness instructions within budget', async (t) => {
+test('session/new appends Pi\'s system prompt after the bridge note while opening and rebuilt prompts carry tool instructions and history within budget', async (t) => {
   const { adapter, prompts } = makeRuntime(t)
   const oversizedTool = {
     name: 'bash',
@@ -3559,7 +3561,7 @@ test('session/new keeps a static bridge system prompt while opening and rebuilt 
     tools: [oversizedTool],
   }
 
-  // Turn 1: fresh session delivers caller system + compacted tool instructions in the opening prompt.
+  // Turn 1: Pi's system prompt goes to session/new; compacted tool instructions open the first prompt.
   const step1 = await collect(
     adapter.stream({
       ...base,
@@ -3568,16 +3570,13 @@ test('session/new keeps a static bridge system prompt while opening and rebuilt 
   )
   assert.equal(finishOf(step1).reason.kind, 'stop')
   const firstPrompt = prompts()[0]
-  assert.equal(firstPrompt.system, bridgeSystemPrompt())
-  assert.doesNotMatch(
+  assert.equal(
     firstPrompt.system,
-    /running inside pi|<docs>|COMPACTED_TOOL_TAIL_MARKER/,
+    `${bridgeSystemPrompt()}\n\n${piSys.content[0].text}`,
   )
-  assert.match(
-    firstPrompt.text,
-    /^<system_instructions>\nYou are a coding assistant running inside pi/,
-  )
-  assert.match(firstPrompt.text, /<harness_tool_instructions>/)
+  assert.doesNotMatch(firstPrompt.system, /COMPACTED_TOOL_TAIL_MARKER/)
+  assert.doesNotMatch(firstPrompt.text, /<system_instructions>|running inside pi/)
+  assert.match(firstPrompt.text, /^<harness_tool_instructions>/)
   assert.match(firstPrompt.text, /COMPACTED_TOOL_TAIL_MARKER/)
   assert.ok(firstPrompt.text.endsWith('\n\nfirst question'))
 
@@ -3598,7 +3597,7 @@ test('session/new keeps a static bridge system prompt while opening and rebuilt 
   assert.equal(secondPrompt.session, firstPrompt.session)
   assert.equal(secondPrompt.text, 'follow-up question')
 
-  // Turn 3: rebuilding after a system prompt update budgets <system_instructions> + <harness_tool_instructions> + <pi_history> inside REPLAY_BUDGET_BYTES.
+  // Turn 3: a replaced system prompt opens a new session carrying it; <harness_tool_instructions> + <pi_history> stay inside REPLAY_BUDGET_BYTES.
   const largeSys = {
     id: 'sys-updated',
     role: 'system',
@@ -3626,12 +3625,12 @@ test('session/new keeps a static bridge system prompt while opening and rebuilt 
   assert.equal(finishOf(step3).reason.kind, 'stop')
   const rebuiltPrompt = prompts()[2]
   assert.notEqual(rebuiltPrompt.session, firstPrompt.session)
-  assert.equal(rebuiltPrompt.system, bridgeSystemPrompt())
-  assert.match(
-    rebuiltPrompt.text,
-    /^<system_instructions>\nUpdated harness rules /,
+  assert.equal(
+    rebuiltPrompt.system,
+    sessionSystemPrompt(largeSys.content[0].text),
   )
-  assert.match(rebuiltPrompt.text, /<harness_tool_instructions>/)
+  assert.doesNotMatch(rebuiltPrompt.text, /Updated harness rules/)
+  assert.match(rebuiltPrompt.text, /^<harness_tool_instructions>/)
   assert.match(rebuiltPrompt.text, /COMPACTED_TOOL_TAIL_MARKER/)
   assert.match(rebuiltPrompt.text, /<pi_history>\n\[Earlier /)
   assert.ok(rebuiltPrompt.text.endsWith('after system update'))
