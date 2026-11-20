@@ -18,6 +18,8 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AntigravityRuntime } from '../src/runtime.ts'
+import { requestMessages } from '../src/pi-stream.ts'
+import { convertToLlm } from '@earendil-works/pi-coding-agent'
 import { ModelCatalog } from '../src/catalog.ts'
 import {
   compactBridgeTool,
@@ -1151,6 +1153,7 @@ test('toTokenUsage keeps cumulative buckets unscaled and prefers positive live u
       cacheWriteTokens: 20,
       reasoningTokens: 15,
       totalTokens: 848,
+      contextMeasured: true,
     },
   )
   assert.deepEqual(
@@ -1216,6 +1219,7 @@ test('usage_update sets single-call totalTokens across tool steps while ignoring
     cacheReadTokens: 400,
     reasoningTokens: 20,
     totalTokens: 848,
+    contextMeasured: true,
   })
 })
 
@@ -1240,6 +1244,25 @@ test('bounded replay keeps Pi\'s compaction summary and omits the oldest message
   const [tight] = replayPrompt(history, [user('u9', 'latest')], { maxHistoryBytes: 200 })
   assert.doesNotMatch(tight.text, /CaseAvatar/)
   assert.match(tight.text, /\[Earlier 6 history messages omitted/)
+})
+
+test('a kept Pi compaction summary and a truncated newest tool result share one replay budget', () => {
+  // Built the way Pi delivers it: a compactionSummary message through convertToLlm.
+  const [summary] = requestMessages(convertToLlm([
+    { role: 'compactionSummary', summary: `GOAL: fix the menu. ${'decision '.repeat(900)}`, tokensBefore: 57_104, timestamp: 1 },
+  ]))
+  assert.ok(summary.content[0].text.startsWith(COMPACTION_SUMMARY_PREFIX))
+  const history = [
+    summary,
+    user('u1', 'run it'),
+    assistant('a1', [{ type: 'text', text: 'running' }]),
+    tool('t1', 'c1', `HEAD ${'r'.repeat(300_000)}`),
+  ]
+  const blocks = replayPrompt(history, [user('u9', 'latest')])
+  const bytes = blocks.reduce((n, b) => n + (b.type === 'text' ? Buffer.byteLength(b.text, 'utf8') : 0), 0)
+  assert.ok(bytes <= REPLAY_BUDGET_BYTES, `${bytes} > ${REPLAY_BUDGET_BYTES}`)
+  assert.match(blocks[0].text, /^<pi_history>\n<user>\nThe conversation history before this point was compacted[\s\S]*GOAL: fix the menu/)
+  assert.match(blocks[0].text, /\[Earlier 2 history messages omitted[\s\S]*HEAD r+\n\[tool result truncated to fit the context replay budget\]/)
 })
 
 test('bounded replay drops the oldest history, closes the block, and keeps the latest input intact', async (t) => {

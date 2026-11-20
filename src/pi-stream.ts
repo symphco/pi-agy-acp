@@ -99,6 +99,8 @@ function errorMessage(
 }
 export interface StreamRuntime {
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>
+  /** Whether the latest reply's context size was measured by agy (set per reply). */
+  contextMeasured?: boolean
 }
 export function streamPi(
   runtime: StreamRuntime,
@@ -107,6 +109,7 @@ export function streamPi(
   options: SimpleStreamOptions = {},
 ) {
   const stream = createAssistantMessageEventStream()
+  runtime.contextMeasured = false
   const message: AssistantMessage = {
     role: 'assistant',
     api: model.api,
@@ -209,6 +212,7 @@ export function streamPi(
         await options.onProviderStreamEvent?.(chunk, model)
         if (chunk.type === 'usage') {
           const u = chunk.usage
+          runtime.contextMeasured = u.contextMeasured === true
           Object.assign(message.usage, {
             input: u.inputTokens,
             output: u.outputTokens,

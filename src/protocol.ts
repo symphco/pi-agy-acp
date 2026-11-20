@@ -32,6 +32,8 @@ export interface TokenUsage {
   cacheWriteTokens?: number
   reasoningTokens?: number
   totalTokens: number
+  /** Whether `totalTokens` is agy's measured context (`usage_update.used`), not an estimate. */
+  contextMeasured?: boolean
 }
 export type StreamChunk =
   | {

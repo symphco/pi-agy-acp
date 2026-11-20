@@ -50,9 +50,9 @@ pi -e ./index.ts
   windows remain fail-closed (`cancelled` before `session/new` completes;
   `reject_once` when no live turn owns the session, even after MCP handshake).
   `session_before_compact` cancels threshold compaction for models with an
-  unknown window, and a false `overflow` compaction (completed reply, real
-  context below the window) caused by the cumulative usage buckets; see
-  [Usage and costs](reference.md#usage-and-costs).
+  unknown window, and a false `overflow` compaction caused by the cumulative
+  usage buckets (completed reply, context measured by agy and below the window
+  minus Pi's reserve); see [Usage and costs](reference.md#usage-and-costs).
   Tree navigation and compaction close conversation sessions and their files,
   retaining the process, bridge, and caches. `session_start` (`new`, `resume`, or
   `fork`) uses the same light reset if the runtime survives; `session_shutdown`

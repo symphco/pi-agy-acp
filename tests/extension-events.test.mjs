@@ -223,6 +223,12 @@ test('lifecycle uses light resets, cache warming stops only for this provider, a
     async () => {},
   )
   const runCommand = t.mock.fn(async () => usageOutput(liveGroups()))
+  let mounted
+  const status = AntigravityRuntime.prototype.status
+  t.mock.method(AntigravityRuntime.prototype, 'status', function (...args) {
+    mounted ??= this
+    return status.apply(this, args)
+  })
   const h = harness(t, { runCommand })
 
   assert.deepEqual(h.handlers.get('cache_warming_decision')({}, h.ctx), {
@@ -275,12 +281,26 @@ test('lifecycle uses light resets, cache warming stops only for this provider, a
     undefined,
   )
   // A completed reply whose cumulative turn usage passed the window while the
-  // real context (preparation.tokensBefore) stayed below it: not an overflow.
+  // measured context (preparation.tokensBefore) stayed below Pi's reserve band:
+  // not an overflow. Pi's default reserve is 16,384 tokens.
   const known = { ...h.ctx, model: { provider, id: 'gemini-4-neon', contextWindow: 512_000 } }
-  const overflow = (willRetry, tokensBefore) => ({ reason: 'overflow', willRetry, preparation: { tokensBefore } })
-  assert.deepEqual(h.handlers.get('session_before_compact')(overflow(false, 56_496), known), { cancel: true })
-  assert.equal(h.handlers.get('session_before_compact')(overflow(false, 512_000), known), undefined)
-  assert.equal(h.handlers.get('session_before_compact')(overflow(true, 56_496), known), undefined)
+  const overflow = (willRetry, tokensBefore) => ({
+    reason: 'overflow',
+    willRetry,
+    preparation: { tokensBefore, settings: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 } },
+  })
+  const compact = (event, ctx = known) => h.handlers.get('session_before_compact')(event, ctx)
+  mounted.contextMeasured = true
+  assert.deepEqual(compact(overflow(false, 56_496)), { cancel: true })
+  assert.deepEqual(compact(overflow(false, 512_000 - 16_384)), { cancel: true })
+  // Inside the reserve band Pi's threshold compaction would fire: keep it.
+  assert.equal(compact(overflow(false, 512_000 - 16_384 + 1)), undefined)
+  assert.equal(compact(overflow(false, 512_000)), undefined)
+  assert.equal(compact(overflow(true, 56_496)), undefined)
+  // An estimated context (no usage_update from agy) cannot rule out an overflow.
+  mounted.contextMeasured = false
+  assert.equal(compact(overflow(false, 56_496)), undefined)
+  mounted.contextMeasured = true
   assert.equal(
     h.handlers.get('session_before_compact')(overflow(false, 56_496), {
       ...h.ctx,

@@ -174,6 +174,8 @@ interface PromptPlan {
 
 /** Owner of the ACP process, the MCP bridge, and every conversation. */
 export class AntigravityRuntime {
+  /** Whether the latest reply's context size was measured by agy (set by streamPi). */
+  contextMeasured = false
   readonly bridge: McpBridge
   readonly catalog: ModelCatalog
   readonly quota: QuotaReader

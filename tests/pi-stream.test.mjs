@@ -167,6 +167,29 @@ test('payload replacement, raw events, Unicode and partial stream failure', asyn
 })
 
 
+test('each reply records whether agy measured its context size', async () => {
+  const runtime = {
+    contextMeasured: true,
+    measured: false,
+    async *stream() {
+      yield {
+        type: 'usage',
+        usage: { inputTokens: 900_000, outputTokens: 10, totalTokens: 40_000, ...(this.measured ? { contextMeasured: true } : {}) },
+      }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  await result(runtime, context(user('hi')))
+  assert.equal(runtime.contextMeasured, false)
+  runtime.measured = true
+  await result(runtime, context(user('hi')))
+  assert.equal(runtime.contextMeasured, true)
+  // A reply without usage (for example a failed one) leaves it unmeasured.
+  runtime.stream = async function* () { yield { type: 'finish', reason: { kind: 'stop' } } }
+  await result(runtime, context(user('hi')))
+  assert.equal(runtime.contextMeasured, false)
+})
+
 test('response instrumentation precedes events and pricing overrides update costs', async () => {
   const order = []
   const pricedModel = {

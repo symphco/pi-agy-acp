@@ -180,12 +180,18 @@ export default function (
     // agy reports a turn's usage once, with cumulative input and cache-read
     // buckets over all its model calls (the context size is `totalTokens`).
     // Pi reads input + cacheRead above the window on a completed reply as a
-    // silent overflow; when the real context is below the window, it is not.
+    // silent overflow; it is not one when agy measured the reply's context
+    // and that context is outside Pi's reserve band, where Pi's threshold
+    // compaction (skipped on this path) would not fire either.
+    const tokens = event.preparation?.tokensBefore
+    const reserve = event.preparation?.settings?.reserveTokens ?? 0
     if (
       event.reason === 'overflow' &&
       event.willRetry === false &&
       contextWindow > 0 &&
-      (event.preparation?.tokensBefore ?? contextWindow) < contextWindow
+      runtime.contextMeasured &&
+      typeof tokens === 'number' &&
+      tokens <= contextWindow - reserve
     )
       return { cancel: true }
     return undefined

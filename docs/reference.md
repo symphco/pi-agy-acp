@@ -162,9 +162,10 @@ The fallback families are:
 These entries are defaults, not a guarantee of account access. Model context windows
 start at `0` until learned dynamically from the server-issued `max_context_tokens`
 metadata in the session database and cached per model in `catalog.json`. The history
-replay budget is 160,000 bytes; older history can be omitted to fit (Pi's
-compaction summary is kept whenever it fits on its own), and historical images
-become text placeholders.
+replay budget is 160,000 bytes; older history can be omitted to fit, and
+historical images become text placeholders. Pi's compaction summary is kept when
+it fits in the budget on its own; the newest messages fill the rest, and a
+summary larger than the budget is omitted like any other message.
 
 ## Usage and costs
 
@@ -192,13 +193,24 @@ built on them count every model call of a turn. Pi 1.5.x, however, also treats a
 completed reply whose `input + cacheRead` exceeds the context window as a silent
 overflow and compacts. A long tool loop passes that line while its real context
 is a fraction of the window. So for this provider the extension cancels an
-automatic `overflow` compaction that will not retry when Pi's own measure of the
-context (`preparation.tokensBefore`) is below the model's known window. Real
-overflows still compact: a provider overflow error (Pi retries it), a context
-at or above the window, and models whose window is unknown. Pi shows such a
-cancel as a brief compaction that ends with "Auto-compaction cancelled"; it can
-recur once at the start of the next prompt, when Pi checks the same reply again.
-Manual `/compact` and threshold compaction are unaffected.
+automatic `overflow` compaction that will not retry when all of these hold:
+
+- the model's window is known;
+- agy measured the reply's context (`usage_update.used`). When it did not,
+  `totalTokens` is an estimate averaged over the turn's calls and cannot rule
+  out a real overflow, so the compaction goes ahead;
+- Pi's measure of the context (`preparation.tokensBefore`) is at most the window
+  minus Pi's `reserveTokens`. Inside that reserve band Pi's threshold compaction
+  would have fired, and the overflow path skips it, so the compaction goes
+  ahead.
+
+Provider overflow errors (Pi retries them), models whose window is unknown,
+manual `/compact` and threshold compaction are unaffected. Pi shows a cancel as
+a brief compaction that ends with "Auto-compaction cancelled", and records it as
+an aborted compaction (`session_compact_failed`); it can recur once at the start
+of the next prompt, when Pi checks the same reply again. Another extension that
+logs compaction outcomes (for example a cached-compaction extension) may record
+these cancels as aborted or fallback attempts; no summary is produced for them.
 
 Default model prices are zero because pricing is unavailable. If you configure
 Pi model pricing overrides, flat per-million rates price the cumulative turn

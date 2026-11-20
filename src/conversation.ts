@@ -435,11 +435,11 @@ export function toTokenUsage(
       : undefined
   const liveContext = options?.contextTokens
   let totalTokens: number
-  if (
+  const contextMeasured =
     typeof liveContext === 'number' &&
     Number.isFinite(liveContext) &&
     liveContext > 0
-  ) {
+  if (contextMeasured) {
     totalTokens = Math.round(liveContext)
   } else {
     const seg = options?.lastSegmentUsage ?? usage
@@ -467,6 +467,7 @@ export function toTokenUsage(
       ? { reasoningTokens: reasoning }
       : {}),
     totalTokens,
+    ...(contextMeasured ? { contextMeasured: true } : {}),
   }
 }
 

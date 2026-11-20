@@ -319,8 +319,13 @@ function historyTranscript(
     const separator = parts.length === 0 ? 0 : 2
     const bytes = utf8Bytes(rendered)
     if (used + separator + bytes > budget) {
-      if (parts.length === 0 && message.role === 'tool' && budget > 1024) {
-        const truncated = truncatedToolTranscript(message, budget)
+      if (
+        parts.length === 0 &&
+        message.role === 'tool' &&
+        budget - used > 1024
+      ) {
+        // The kept summary already used part of the budget.
+        const truncated = truncatedToolTranscript(message, budget - used)
         if (truncated !== undefined) {
           parts.unshift(truncated)
           dropped = index - lowest
