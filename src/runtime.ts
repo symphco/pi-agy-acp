@@ -67,6 +67,9 @@ import {
   BRIDGE_AGENT,
   defaultHome,
   prepareHome,
+  processHome,
+  removeDeadProcessHomes,
+  removeProcessHome,
   readSessionMaxContextTokens,
   readSessionNextMetadataIndex,
   removeSessionArtifacts,
@@ -106,7 +109,10 @@ export interface RuntimeStatus {
   error?: string
   binary?: string
   version?: string
+  /** Shared home (`PI_AGY_HOME` or the default). */
   home: string
+  /** This runtime's own Antigravity home under `home`. */
+  processHome: string
   account?: AccountInfo
   contextWindow?: number
   defaultEffort: Effort
@@ -171,6 +177,9 @@ export class AntigravityRuntime {
   readonly bridge: McpBridge
   readonly catalog: ModelCatalog
   readonly quota: QuotaReader
+  /** Shared home: the model cache and preferences, the parent of every runtime's own home. */
+  private readonly baseHome: string
+  /** This runtime's own `--gemini-dir` (`processHome`), removed on dispose. */
   private readonly home: string
   private process: AcpProcess | undefined
   private starting: Promise<AcpProcess> | undefined
@@ -195,8 +204,10 @@ export class AntigravityRuntime {
   /** @param host - host services. */
   constructor(host: RuntimeHost) {
     this.host = host
-    this.home = host.config.home.length > 0 ? host.config.home : defaultHome()
-    this.catalog = new ModelCatalog(join(this.home, 'catalog.json'))
+    this.baseHome =
+      host.config.home.length > 0 ? host.config.home : defaultHome()
+    this.home = processHome(this.baseHome)
+    this.catalog = new ModelCatalog(join(this.baseHome, 'catalog.json'))
     this.bridge = new McpBridge(
       {
         listTools: (tenantKey) => this.listTools(tenantKey),
@@ -272,7 +283,8 @@ export class AntigravityRuntime {
             version: this.preflight.version,
           }
         : {}),
-      home: this.home,
+      home: this.baseHome,
+      processHome: this.home,
       account: this.accountInfo(),
       ...(activeContextWindow !== undefined
         ? { contextWindow: activeContextWindow }
@@ -299,9 +311,11 @@ export class AntigravityRuntime {
   }
 
   private accountInfo(): AccountInfo | undefined {
-    const paths = [join(this.home, 'acp.log')]
+    // This runtime's log, then the shared home's (written by earlier versions).
+    const paths = [join(this.home, 'acp.log'), join(this.baseHome, 'acp.log')]
     if (
-      this.home === join(homedir(), '.pi', 'agent', 'cache', 'antigravity-acp')
+      this.baseHome ===
+      join(homedir(), '.pi', 'agent', 'cache', 'antigravity-acp')
     )
       paths.push(join(homedir(), '.gemini', 'antigravity-cli', 'cli.log'))
     const email = readLoggedEmail(paths)
@@ -442,6 +456,7 @@ export class AntigravityRuntime {
       await this.starting?.catch(() => undefined)
       await this.warmupPromise?.catch(() => undefined)
       await this.bridge.close()
+      removeProcessHome(this.home)
       this.state = 'idle'
       this.lifecycle = 'disposed'
     })()
@@ -745,6 +760,7 @@ export class AntigravityRuntime {
       const version = await readVersion(binary, this.host.runCommand)
       this.assertActive()
       assertSupportedAgyVersion(version, binary)
+      removeDeadProcessHomes(this.baseHome)
       const workspace = prepareHome(this.home)
       const result: PreflightResult = {
         binary,

@@ -126,7 +126,16 @@ function makeRuntime(t, extra = {}) {
   const prompts = () => readJsonl(log)
   const inits = () => readJsonl(initLog)
   const mcps = () => readJsonl(mcpLog)
-  return { home, runtime, prompts, inits, mcps, adapter: runtime }
+  // `home` is where this runtime's agy writes; `base` is the shared PI_AGY_HOME.
+  return {
+    home: runtime.status().processHome,
+    base: home,
+    runtime,
+    prompts,
+    inits,
+    mcps,
+    adapter: runtime,
+  }
 }
 
 test('warmup coalesces discovery, cleans its files, and skips a live catalog from either session path', async (t) => {
@@ -255,6 +264,24 @@ test('a process restart cleans leftovers even when preflight metadata is cached'
   proc.stop()
   await runtime.ensureReady()
   assert.equal(existsSync(leftover), false)
+})
+
+test('runtimes sharing PI_AGY_HOME keep their own homes: a second start leaves the first session alone', async (t) => {
+  const shared = mkdtempSync(join(tmpdir(), 'agy-acp-shared-'))
+  t.after(() => rmSync(shared, { recursive: true, force: true }))
+  const first = makeRuntime(t, { config: { home: shared } })
+  const second = makeRuntime(t, { config: { home: shared } })
+  assert.notEqual(first.home, second.home)
+  await collect(first.runtime.stream({ model: 'gemini-4-argon', sessionId: 'FIRST', messages: [sys, user('FIRST', 'hello')] }))
+  const id = first.runtime.conversations.get('FIRST').sessionId
+  const live = join(first.home, 'agy', 'conversations', `${id}.db`)
+  assert.equal(existsSync(live), true)
+  await second.runtime.ensureReady()
+  assert.equal(existsSync(join(second.home, 'workspace')), true)
+  assert.equal(existsSync(live), true)
+  await first.runtime.dispose()
+  assert.equal(existsSync(first.home), false)
+  assert.equal(existsSync(second.home), true)
 })
 
 test('forced warmup refreshes an observed catalog and aborting one waiter keeps shared discovery alive', async (t) => {
@@ -2610,14 +2637,14 @@ async function assertWireRecovery(fixture, request) {
 
 async function assertSessionReplyLoss(t, action) {
   const fixture = makeWireRuntime(t, action)
-  const { runtime, home } = fixture
+  const { runtime, home, base } = fixture
   const old = await runtime.ensureReady()
   const request = { model: 'gemini-4-argon', sessionId: 'owner', messages: [sys, user('u1', 'hello')] }
   await assertWireLoss(fixture, old, request)
   assert.equal(existsSync(join(home, 'agy', 'conversations', 'late-1.db')), false)
   assert.equal(runtime.catalog.observed, false)
   assert.equal(runtime.catalog.tier(), undefined)
-  assert.equal(existsSync(join(home, 'catalog.json')), false)
+  assert.equal(existsSync(join(base, 'catalog.json')), false)
   await assertWireRecovery(fixture, request)
 }
 
@@ -3713,7 +3740,7 @@ test('permission probes fail closed during session/new and pre-/post-turn window
 
 test('contextWindow starts at 0 without static fallbacks and updates dynamically from session metadata before turn finish', async (t) => {
   const modelUpdates = []
-  const { home, runtime, adapter } = makeRuntime(t, {
+  const { base, runtime, adapter } = makeRuntime(t, {
     host: {
       onModelsChanged: () => {
         modelUpdates.push({
@@ -3749,7 +3776,7 @@ test('contextWindow starts at 0 without static fallbacks and updates dynamically
     [0, 512_000],
   )
   assert.equal(
-    new ModelCatalog(join(home, 'catalog.json')).contextWindowFor('gemini-4-argon'),
+    new ModelCatalog(join(base, 'catalog.json')).contextWindowFor('gemini-4-argon'),
     512_000,
   )
 

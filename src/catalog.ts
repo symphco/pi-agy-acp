@@ -7,7 +7,13 @@
  * @module pi-agy-acp/catalog
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import type { AcpConfigOption, AcpTierInfo } from './acp-process.ts'
 import { EFFORTS, type Effort } from './config.ts'
 
@@ -245,9 +251,12 @@ export class ModelCatalog {
   }
 
   private save(): void {
+    // Every Pi process shares this cache: write a temp file and rename it, so a
+    // concurrent reader never sees a half-written file.
+    const temp = `${this.cachePath}.${process.pid}.${Date.now()}.tmp`
     try {
       writeFileSync(
-        this.cachePath,
+        temp,
         `${JSON.stringify(
           {
             models: this.models,
@@ -260,8 +269,14 @@ export class ModelCatalog {
           2,
         )}\n`,
       )
+      renameSync(temp, this.cachePath)
     } catch (_cacheWrite) {
       // The cache only speeds up the next cold start.
+      try {
+        unlinkSync(temp)
+      } catch {
+        // Nothing was written.
+      }
     }
   }
 

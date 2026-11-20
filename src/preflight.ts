@@ -22,6 +22,7 @@ import {
   rmSync,
   type Stats,
 } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join, relative } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -161,6 +162,79 @@ export function defaultHome(): string {
     process.env.PI_AGY_HOME ||
     join(homedir(), '.pi', 'agent', 'cache', 'antigravity-acp')
   )
+}
+
+/** Folder under the shared home that holds one Antigravity home per runtime. */
+export const PROCESS_HOMES = 'processes'
+
+/** `<pid>-<hex>`: a runtime's own home, named after the process that owns it. */
+const PROCESS_HOME_NAME = /^(\d+)-[0-9a-f]+$/
+
+/**
+ * A runtime's own `--gemini-dir`, under the shared home. `prepareHome` clears
+ * a home's conversations at every agy start, so each runtime (each Pi process,
+ * including subagents that inherit `PI_AGY_HOME`) gets one nobody else uses.
+ * Nothing is created until agy starts.
+ * @param base - shared home (`PI_AGY_HOME` or the default).
+ * @param pid - owning process id.
+ * @returns `<base>/processes/<pid>-<random hex>`.
+ */
+export function processHome(base: string, pid: number = process.pid): string {
+  return join(base, PROCESS_HOMES, `${pid}-${randomBytes(6).toString('hex')}`)
+}
+
+/**
+ * Whether a process still runs. A process of another user (`EPERM`) counts as
+ * running, so its home is kept.
+ * @param pid - process id.
+ * @returns false only when no such process exists.
+ */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === 'EPERM'
+  }
+}
+
+/**
+ * Remove the homes of runtimes whose process has ended (crashed or killed
+ * before it could remove its own). A home of a running process, an unknown
+ * name, or anything that is not a real directory is left alone.
+ * @param base - shared home.
+ * @param isAlive - liveness check, replaceable in tests.
+ */
+export function removeDeadProcessHomes(
+  base: string,
+  isAlive: (pid: number) => boolean = isProcessAlive,
+): void {
+  const parent = join(base, PROCESS_HOMES)
+  if (!isRealDirectory(parent)) return
+  let names: string[]
+  try {
+    names = readdirSync(parent)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    const match = PROCESS_HOME_NAME.exec(name)
+    if (match === null) continue
+    const pid = Number(match[1])
+    if (pid === process.pid || isAlive(pid)) continue
+    removeArtifacts(parent, [name])
+  }
+}
+
+/**
+ * Remove a runtime's own home when it shuts down.
+ * @param home - the runtime's `processHome`.
+ */
+export function removeProcessHome(home: string): void {
+  const parent = join(home, '..')
+  const name = relative(parent, home)
+  if (!PROCESS_HOME_NAME.test(name)) return
+  removeArtifacts(parent, [name])
 }
 
 /**
@@ -514,7 +588,8 @@ export function prepareHome(
   const appData = join(home, 'agy')
   mkdirSync(appData, { recursive: true })
   // Pi owns conversation history; no ACP session is restored across processes.
-  // shortcut: cleanup requires an exclusive home; add locking before supporting shared homes.
+  // The home is exclusive to one runtime (`processHome`), so this never touches
+  // another process's live sessions.
   removeArtifacts(appData, [
     'conversations',
     'brain',

@@ -116,13 +116,19 @@ PI_AGY_COMMAND=/absolute/path/to/agy pi -e ./index.ts
 ### Stored data and authentication
 
 The dedicated directory isolates the bridge agent from your normal agy tools and
-plugins. It contains agy-managed session data, logs, and the extension's model cache.
+plugins. It holds the extension's model cache (`catalog.json`) and
+`settings.json` (quota display preference), shared by every Pi instance, and one
+agy home per running instance in `processes/<pid>-<random>/` with that
+instance's agy session data, log (`acp.log`), and authentication files.
 
-Temporary session data and old logs are removed automatically. The current log,
-model cache, `settings.json` (quota display preference), and authentication files
-are retained; sessions rebuild from Pi's history. Cleanup is best-effort if files are locked. Use a different `PI_AGY_HOME`
-for each concurrently running Pi instance, since startup cleanup assumes exclusive
-use of the directory.
+Many Pi instances can share one `PI_AGY_HOME`, including subagents that inherit
+it: each instance starts agy with its own home, so starting one never clears
+another's sessions. An instance clears its own home's temporary session data and
+old logs whenever agy starts, removes the home on shutdown, and at startup
+removes the homes of instances whose process has ended (never one whose process
+still runs). Sessions rebuild from Pi's history. Cleanup is best-effort if files
+are locked. Folders an earlier version left directly in `PI_AGY_HOME` (`agy`,
+`config`, `workspace`, `acp.log`) are no longer used and can be deleted.
 
 With file-backed authentication, the extension copies the existing OAuth token
 from your normal agy directory and sets its permissions to `0600`. Do not commit

@@ -10,7 +10,7 @@ import {
   symlinkSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, delimiter } from 'node:path'
+import { basename, join, delimiter } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   resolveAgyBinary,
@@ -20,6 +20,10 @@ import {
   extractMaxContextTokens,
   readSessionMaxContextTokens,
   readSessionNextMetadataIndex,
+  processHome,
+  removeDeadProcessHomes,
+  removeProcessHome,
+  isProcessAlive,
 } from '../src/preflight.ts'
 import { defaults } from '../src/config.ts'
 import { AntigravityRuntime } from '../src/runtime.ts'
@@ -311,6 +315,65 @@ test('account panels handle both fields, either field, and no fields', () => {
       )
     }
   }
+})
+
+test('each runtime gets its own home under the shared one, even in one process', (t) => {
+  const base = isolateHome(t)
+  const a = processHome(base)
+  const b = processHome(base)
+  assert.notEqual(a, b)
+  for (const home of [a, b]) {
+    assert.equal(join(home, '..'), join(base, 'processes'))
+    assert.match(basename(home), new RegExp(`^${process.pid}-[0-9a-f]+$`))
+  }
+  assert.match(processHome(base, 42), /[/\\]processes[/\\]42-[0-9a-f]+$/)
+  // Starting one runtime never clears another's live conversations.
+  for (const home of [a, b]) {
+    mkdirSync(join(home, 'agy', 'conversations'), { recursive: true })
+    writeFileSync(join(home, 'agy', 'conversations', 'live.db'), 'live')
+  }
+  prepareHome(a, join(base, 'no-user-auth'))
+  assert.equal(existsSync(join(a, 'agy', 'conversations', 'live.db')), false)
+  assert.equal(readFileSync(join(b, 'agy', 'conversations', 'live.db'), 'utf8'), 'live')
+  removeProcessHome(a)
+  assert.equal(existsSync(a), false)
+  assert.equal(existsSync(b), true)
+  // Only a runtime home is ever removed this way.
+  removeProcessHome(base)
+  assert.equal(existsSync(base), true)
+})
+
+test('startup removes only the homes of ended processes', (t) => {
+  const base = isolateHome(t)
+  const parent = join(base, 'processes')
+  const outside = join(base, 'outside')
+  mkdirSync(outside)
+  writeFileSync(join(outside, 'keep'), 'untouched')
+  const names = {
+    own: `${process.pid}-aa`,
+    alive: '424242-bb',
+    dead: '999999-cc',
+    other: 'not-a-home',
+  }
+  for (const name of Object.values(names)) {
+    mkdirSync(join(parent, name, 'agy'), { recursive: true })
+    writeFileSync(join(parent, name, 'agy', 'state'), name)
+  }
+  symlinkSync(outside, join(parent, '999998-dd'), 'junction')
+  const asked = []
+  removeDeadProcessHomes(base, (pid) => {
+    asked.push(pid)
+    return pid === 424242
+  })
+  assert.equal(existsSync(join(parent, names.own)), true)
+  assert.equal(existsSync(join(parent, names.alive)), true)
+  assert.equal(existsSync(join(parent, names.other)), true)
+  assert.equal(existsSync(join(parent, names.dead)), false)
+  assert.equal(existsSync(join(parent, '999998-dd')), false)
+  assert.equal(readFileSync(join(outside, 'keep'), 'utf8'), 'untouched')
+  assert.equal(asked.includes(process.pid), false)
+  assert.doesNotThrow(() => removeDeadProcessHomes(join(base, 'missing')))
+  assert.equal(isProcessAlive(process.pid), true)
 })
 
 test('binary discovery skips same-name directories and version error matches minimum', (t) => {
